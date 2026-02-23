@@ -159,6 +159,109 @@ func TestIdx(t *testing.T) {
 	}
 }
 
+func TestObjects(t *testing.T) {
+	t.Parallel()
+
+	t.Run("basic ofs-delta fixture", testObjectsBasicOFSDelta)
+
+	t.Run("no packfile hash returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		f := fixtures.ByTag("merge-conflict").One()
+		require.NotNil(t, f)
+
+		assert.Nil(t, f.Objects())
+	})
+
+	t.Run("thin pack without idx returns nil", func(t *testing.T) {
+		t.Parallel()
+
+		f := fixtures.ByTag("thinpack").One()
+		require.NotNil(t, f)
+
+		assert.Nil(t, f.Objects())
+	})
+}
+
+func testObjectsBasicOFSDelta(t *testing.T) {
+	t.Helper()
+	t.Parallel()
+
+	// The basic ofs-delta fixture has 31 known objects.
+	f := fixtures.ByTag("ofs-delta").ByTag("packfile").
+		Exclude("root-reference").One()
+	require.NotNil(t, f)
+
+	objs := f.Objects()
+	require.NotNil(t, objs)
+	assert.Len(t, objs, 31)
+
+	// Build a lookup map by hash for convenient per-object assertions.
+	byHash := make(map[string]fixtures.PackfileObject, len(objs))
+	for _, o := range objs {
+		byHash[o.Hash] = o
+	}
+
+	// Spot-check known objects. Objects stored as deltas (ofs-delta /
+	// ref-delta) report the raw packfile type, not the resolved logical type.
+	type entry struct {
+		hash   string
+		otype  fixtures.ObjectType
+		size   int64
+		offset int64
+		crc    uint32
+	}
+
+	tests := []entry{
+		{"e8d3ffab552895c19b9fcf7aa264d277cde33881", fixtures.ObjectTypeCommit, 254, 12, 0xaa07ba4b},
+		{"918c48b83bd081e863dbe1b80f8998f058cd8294", fixtures.ObjectTypeCommit, 242, 286, 0x12438846},
+		{"af2d6a6954d532f8ffb47615169c8fdf9d383a1a", fixtures.ObjectTypeCommit, 242, 449, 0x2905a38c},
+		{"1669dce138d9b841a518c64b10914d88f5e488ea", fixtures.ObjectTypeCommit, 333, 615, 0xd9429436},
+		{"32858aad3c383ed1ff0a0f9bdf231d54a00c9e88", fixtures.ObjectTypeBlob, 189, 1524, 0x1f08118a},
+		{"dbd3641b371024f44d0e469a9c8f5457b0660de1", fixtures.ObjectTypeTree, 272, 84115, 0x901cce2c},
+		// Stored as ofs-delta in this packfile (delta-compressed commit).
+		{"6ecf0ef2c2dffb796033e5a02219af86ec6584e5", fixtures.ObjectTypeOFSDelta, 93, 186, 0xf706df58},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.hash[:8], func(t *testing.T) {
+			t.Parallel()
+
+			o, ok := byHash[tc.hash]
+			require.True(t, ok, "object %s not found", tc.hash)
+			assert.Equal(t, tc.otype, o.Type)
+			assert.Equal(t, tc.size, o.Size)
+			assert.Equal(t, tc.offset, o.Offset)
+			assert.Equal(t, tc.crc, o.CRC)
+		})
+	}
+}
+
+func TestObjectTypeString(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		otype fixtures.ObjectType
+		want  string
+	}{
+		{fixtures.ObjectTypeCommit, "commit"},
+		{fixtures.ObjectTypeTree, "tree"},
+		{fixtures.ObjectTypeBlob, "blob"},
+		{fixtures.ObjectTypeTag, "tag"},
+		{fixtures.ObjectTypeOFSDelta, "ofs-delta"},
+		{fixtures.ObjectTypeREFDelta, "ref-delta"},
+		{fixtures.ObjectType(99), "unknown"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.want, func(t *testing.T) {
+			t.Parallel()
+
+			assert.Equal(t, tc.want, tc.otype.String())
+		})
+	}
+}
+
 func TestWithMemFS(t *testing.T) {
 	t.Parallel()
 
